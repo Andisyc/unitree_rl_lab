@@ -70,14 +70,17 @@ def export_deploy_cfg(env: ManagerBasedRLEnv, log_dir):
         # clean cfg
         term_cfg = term_cfg.to_dict()
 
+        # Use pop to safely remove fields that may not exist in all Isaac Lab versions
         for _ in ["class_type", "asset_name", "debug_vis", "preserve_order", "use_default_offset"]:
-            del term_cfg[_]
+            term_cfg.pop(_, None)
         cfg["actions"][action_name] = term_cfg
 
-        if action_term._joint_ids == slice(None):
+        # _joint_ids attribute name may differ across Isaac Lab versions
+        joint_ids_attr = getattr(action_term, "_joint_ids", None)
+        if joint_ids_attr is None or joint_ids_attr == slice(None):
             cfg["actions"][action_name]["joint_ids"] = None
         else:
-            cfg["actions"][action_name]["joint_ids"] = action_term._joint_ids
+            cfg["actions"][action_name]["joint_ids"] = joint_ids_attr
 
     # --- observations ---
     obs_names = env.observation_manager.active_terms["policy"]
@@ -102,8 +105,9 @@ def export_deploy_cfg(env: ManagerBasedRLEnv, log_dir):
 
         # clean cfg
         term_cfg = term_cfg.to_dict()
+        # Use pop to safely remove fields that may not exist in all Isaac Lab versions
         for _ in ["func", "modifiers", "noise", "flatten_history_dim"]:
-            del term_cfg[_]
+            term_cfg.pop(_, None)
         cfg["observations"][obs_name] = term_cfg
 
     # --- save config file ---
