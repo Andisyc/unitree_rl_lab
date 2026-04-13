@@ -21,21 +21,58 @@ def add_rsl_rl_args(parser: argparse.ArgumentParser):
     """
     # create a new argument group
     arg_group = parser.add_argument_group("rsl_rl", description="Arguments for RSL-RL agent.")
+
+    # -- load arguments
+    arg_group.add_argument(
+        "--resume", 
+        action="store_true", 
+        default=False, 
+        help="Whether to resume from a checkpoint."
+    )
+
+    arg_group.add_argument(
+        "--load_run", 
+        type=str, 
+        default=None, 
+        help="Name of the run folder to resume from."
+    )
+
+    arg_group.add_argument(
+        "--checkpoint", 
+        type=str, 
+        default="/home/chengyuxuan/unitree_rl_lab/logs/rsl_rl/unitree_g1_29dof_velocity/2026-04-08_18-07-18_unitree_rl_lab/model_4600.pt", 
+        help="Checkpoint file to resume from."
+    )
+
     # -- experiment arguments
     arg_group.add_argument(
-        "--experiment_name", type=str, default=None, help="Name of the experiment folder where logs will be stored."
+        "--logger", 
+        type=str, 
+        default="wandb", 
+        choices={"wandb", "tensorboard", "neptune"}, 
+        help="Logger module to use."
     )
-    arg_group.add_argument("--run_name", type=str, default=None, help="Run name suffix to the log directory.")
-    # -- load arguments
-    arg_group.add_argument("--resume", action="store_true", default=False, help="Whether to resume from a checkpoint.")
-    arg_group.add_argument("--load_run", type=str, default=None, help="Name of the run folder to resume from.")
-    arg_group.add_argument("--checkpoint", type=str, default=None, help="Checkpoint file to resume from.")
+
+    arg_group.add_argument(
+        "--log_project_name", 
+        type=str, 
+        default="uni_rl_lab", 
+        help="Name of the logging project when using wandb or neptune."
+    )
+
     # -- logger arguments
     arg_group.add_argument(
-        "--logger", type=str, default=None, choices={"wandb", "tensorboard", "neptune"}, help="Logger module to use."
+        "--experiment_name", 
+        type=str, 
+        default=None, 
+        help="Name of the experiment folder where logs will be stored."
     )
+
     arg_group.add_argument(
-        "--log_project_name", type=str, default=None, help="Name of the logging project when using wandb or neptune."
+        "--run_name",
+        type=str, 
+        default="unitree_rl_lab", 
+        help="Run name suffix to the log directory."
     )
 
 

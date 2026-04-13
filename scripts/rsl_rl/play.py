@@ -17,18 +17,43 @@ import cli_args  # isort: skip
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
-parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
-parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+
 parser.add_argument(
-    "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
+    "--video", 
+    action="store_true", 
+    default=True, 
+    help="Record videos during training."
 )
-parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
-parser.add_argument("--task", type=str, default=None, help="Name of the task.")
+
+parser.add_argument(
+    "--video_length", 
+    type=int, 
+    default=200, 
+    help="Length of the recorded video (in steps)."
+    )
+
+parser.add_argument("--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations.")
+
+parser.add_argument(
+    "--num_envs", 
+    type=int, 
+    default=1, 
+    help="Number of environments to simulate."
+)
+
+parser.add_argument(
+    "--task", 
+    type=str, 
+    default="Unitree-G1-29dof-Velocity", 
+    help="Name of the task."
+)
+
 parser.add_argument(
     "--use_pretrained_checkpoint",
     action="store_true",
     help="Use the pre-trained checkpoint from Nucleus.",
 )
+
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
