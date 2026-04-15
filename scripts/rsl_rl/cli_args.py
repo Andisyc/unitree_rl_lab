@@ -40,7 +40,7 @@ def add_rsl_rl_args(parser: argparse.ArgumentParser):
     arg_group.add_argument(
         "--checkpoint", 
         type=str, 
-        default="/home/chengyuxuan/unitree_rl_lab/logs/rsl_rl/unitree_g1_29dof_velocity/2026-04-08_18-07-18_unitree_rl_lab/model_4600.pt", 
+        default="/ssd1/chengyuxuan/logs/rsl_rl/unitree_g1_29dof_velocity/2026-04-14_11-22-38_unitree_rl_lab/model_12900.pt", 
         help="Checkpoint file to resume from."
     )
 
