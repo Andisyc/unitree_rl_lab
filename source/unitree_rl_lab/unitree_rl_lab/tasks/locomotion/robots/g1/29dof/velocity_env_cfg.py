@@ -268,8 +268,17 @@ class RewardsCfg:
                 joint_names=[
                     ".*_shoulder_.*_joint",
                     ".*_elbow_joint",
-                    ".*_wrist_.*",
                 ],
+            )
+        },
+    )
+    joint_deviation_wrists = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.5,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_wrist_.*"],
             )
         },
     )
@@ -296,15 +305,20 @@ class RewardsCfg:
         weight=-0.3,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["waist_yaw_joint"])},
     )
+    joint_deviation_hip_yaw = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.1,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_hip_yaw_joint"])},
+    )
 
     # -- robot
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.5)
-    base_height = RewTerm(func=mdp.base_height_l2, weight=-5.0, params={"target_height": 0.78})
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
+    base_height = RewTerm(func=mdp.base_height_l2, weight=-8.0, params={"target_height": 0.78})
 
     # -- feet
     gait = RewTerm(
         func=mdp.feet_gait,
-        weight=1.0,
+        weight=0.5,
         params={
             "period": 0.8,
             "offset": [0.0, 0.5],
