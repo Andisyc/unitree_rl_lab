@@ -118,14 +118,27 @@ def feet_height_body(
 
 
 def foot_clearance_reward(
-    env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, target_height: float, std: float, tanh_mult: float
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    target_height: float,
+    std: float,
+    tanh_mult: float,
+    command_name: str | None = None,
 ) -> torch.Tensor:
     """Reward the swinging feet for clearing a specified height off the ground"""
     asset: RigidObject = env.scene[asset_cfg.name]
     foot_z_target_error = torch.square(asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - target_height)
     foot_velocity_tanh = torch.tanh(tanh_mult * torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
     reward = foot_z_target_error * foot_velocity_tanh
-    return torch.exp(-torch.sum(reward, dim=1) / std)
+    exp_reward = torch.exp(-torch.sum(reward, dim=1) / std)
+    # Without gating, both-feet-on-ground gives exp(-0)=1.0 (max reward) because
+    # foot velocity≈0 makes the error-velocity product collapse to zero.
+    # Gate on linear command so standing still doesn't earn clearance reward.
+    if command_name is not None:
+        cmd = env.command_manager.get_command(command_name)
+        lin_vel_norm = torch.norm(cmd[:, :2], dim=1)
+        exp_reward *= lin_vel_norm > 0.1
+    return exp_reward
 
 
 def feet_too_near(
@@ -178,6 +191,7 @@ def feet_gait(
     sensor_cfg: SceneEntityCfg,
     threshold: float = 0.5,
     command_name=None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     is_contact = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids] > 0
@@ -197,6 +211,15 @@ def feet_gait(
     if command_name is not None:
         cmd_norm = torch.norm(env.command_manager.get_command(command_name), dim=1)
         reward *= cmd_norm > 0.1
+
+    # Require the robot to actually be moving — prevents marching-in-place reward hack
+    # where a commanded-but-unexecuted velocity triggers gait reward without locomotion.
+    # Turning counts (actual_ang_vel > 0.1) so that foot-stepping during turns is still rewarded.
+    asset: Articulation = env.scene[asset_cfg.name]
+    actual_lin_vel = torch.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
+    actual_ang_vel = torch.abs(asset.data.root_ang_vel_b[:, 2])
+    reward *= (actual_lin_vel > 0.05) | (actual_ang_vel > 0.1)
+
     return reward
 
 

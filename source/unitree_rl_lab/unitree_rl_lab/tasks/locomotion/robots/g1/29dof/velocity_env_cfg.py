@@ -338,6 +338,7 @@ class RewardsCfg:
             "tanh_mult": 2.0,
             "target_height": 0.1,
             "asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*"),
+            "command_name": "base_velocity",
         },
     )
 
