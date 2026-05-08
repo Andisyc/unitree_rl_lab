@@ -125,20 +125,44 @@ def foot_clearance_reward(
     tanh_mult: float,
     command_name: str | None = None,
 ) -> torch.Tensor:
-    """Reward the swinging feet for clearing a specified height off the ground"""
+    """Reward feet that actively swing (relative to body) near the target clearance height.
+
+    The original exp(-error*vel) formulation has two failure modes:
+      1. vel=0  → product=0 → exp(-0)=1.0  (max reward for a stationary foot — drift-stomping bug)
+      2. world-frame vel is non-zero even for a foot dragged by a leaning body,
+         so the reward fires for drift-stomping without real foot swing.
+
+    This formulation rewards:
+        height_bonus(foot near target_height) × swing_activity(foot moving relative to body)
+    When the foot is not actively swinging relative to the body, swing_activity→0 and
+    the reward is zero regardless of foot height — drift-stomping earns nothing.
+    """
     asset: RigidObject = env.scene[asset_cfg.name]
-    foot_z_target_error = torch.square(asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - target_height)
-    foot_velocity_tanh = torch.tanh(tanh_mult * torch.norm(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2], dim=2))
-    reward = foot_z_target_error * foot_velocity_tanh
-    exp_reward = torch.exp(-torch.sum(reward, dim=1) / std)
-    # Without gating, both-feet-on-ground gives exp(-0)=1.0 (max reward) because
-    # foot velocity≈0 makes the error-velocity product collapse to zero.
-    # Gate on linear command so standing still doesn't earn clearance reward.
+
+    # Height bonus: peaks at 1 when foot is exactly at target_height.
+    # Use target_height**2 as the Gaussian width so the reward decays to ~37% when
+    # the foot is one target_height away (e.g. 10cm error on a 10cm target).
+    # The std parameter is intentionally not reused here — its original semantic
+    # (divisor for the exp sum) no longer applies after the formula redesign.
+    foot_z = asset.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    height_bonus = torch.exp(-torch.square(foot_z - target_height) / (target_height ** 2))
+
+    # Foot velocity relative to root body (not world frame).
+    # "Dragged by a drifting body" → rel_vel ≈ 0 → swing_activity ≈ 0.
+    # "Actively swinging forward" → rel_vel is large → swing_activity > 0.
+    foot_vel_world = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2]
+    root_vel_world = asset.data.root_lin_vel_w[:, :2].unsqueeze(1)
+    foot_vel_rel = foot_vel_world - root_vel_world
+    swing_activity = torch.tanh(tanh_mult * torch.norm(foot_vel_rel, dim=2))
+
+    # Average over feet so weight is independent of foot count.
+    reward = torch.mean(height_bonus * swing_activity, dim=1)
+
     if command_name is not None:
         cmd = env.command_manager.get_command(command_name)
         lin_vel_norm = torch.norm(cmd[:, :2], dim=1)
-        exp_reward *= lin_vel_norm > 0.1
-    return exp_reward
+        reward *= lin_vel_norm > 0.1
+    return reward
 
 
 def feet_too_near(
@@ -209,16 +233,55 @@ def feet_gait(
         reward += ~(is_stance ^ is_contact[:, i])
 
     if command_name is not None:
-        cmd_norm = torch.norm(env.command_manager.get_command(command_name), dim=1)
+        cmd = env.command_manager.get_command(command_name)
+        cmd_norm = torch.norm(cmd, dim=1)
         reward *= cmd_norm > 0.1
 
-    # Require the robot to actually be moving — prevents marching-in-place reward hack
-    # where a commanded-but-unexecuted velocity triggers gait reward without locomotion.
-    # Turning counts (actual_ang_vel > 0.1) so that foot-stepping during turns is still rewarded.
-    asset: Articulation = env.scene[asset_cfg.name]
-    actual_lin_vel = torch.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
-    actual_ang_vel = torch.abs(asset.data.root_ang_vel_b[:, 2])
-    reward *= (actual_lin_vel > 0.05) | (actual_ang_vel > 0.1)
+        # Scale gait reward proportionally to velocity achievement fraction.
+        # A binary threshold (e.g. actual_vel > 0.05) is easily gamed: stomping
+        # creates ~0.06-0.1 m/s body drift that clears any small fixed threshold,
+        # granting full gait reward without real locomotion.
+        # Proportional scaling makes the gait reward ≈0 when marching in place
+        # and grows linearly to full reward only when the robot achieves the
+        # commanded velocity — this gradient cannot be gamed by threshold-cheating.
+        asset: Articulation = env.scene[asset_cfg.name]
+
+        # Linear: project actual velocity onto commanded direction (ignore perpendicular drift).
+        cmd_lin = cmd[:, :2]
+        cmd_lin_norm = torch.norm(cmd_lin, dim=1)
+        cmd_lin_dir = cmd_lin / (cmd_lin_norm.unsqueeze(1) + 1e-6)
+        vel_in_cmd_dir = torch.sum(asset.data.root_lin_vel_b[:, :2] * cmd_lin_dir, dim=-1).clamp(min=0)
+        lin_frac = torch.where(
+            cmd_lin_norm > 0.1,
+            (vel_in_cmd_dir / cmd_lin_norm).clamp(0.0, 1.0),
+            torch.ones_like(cmd_lin_norm),  # no lin cmd → not the constraining axis
+        )
+
+        # Angular: signed progress in the commanded rotation direction.
+        cmd_ang = cmd[:, 2]
+        cmd_ang_abs = cmd_ang.abs()
+        ang_progress = (asset.data.root_ang_vel_b[:, 2] * cmd_ang.sign()).clamp(min=0)
+        ang_frac = torch.where(
+            cmd_ang_abs > 0.1,
+            (ang_progress / cmd_ang_abs).clamp(0.0, 1.0),
+            torch.ones_like(cmd_ang_abs),  # no ang cmd → not the constraining axis
+        )
+
+        # When both axes are commanded, both must be achieved (product).
+        # When only one axis is commanded, only that axis gates the reward.
+        has_lin = cmd_lin_norm > 0.1
+        has_ang = cmd_ang_abs > 0.1
+        # When neither axis has a large enough command to constrain individually but
+        # the combined norm passed the gate (e.g. lin=0.08, ang=0.08, norm≈0.113),
+        # fall back to zero rather than 1.0 — the robot should not get free gait reward.
+        vel_fraction = torch.where(
+            has_lin & has_ang,
+            lin_frac * ang_frac,
+            torch.where(has_lin, lin_frac,
+            torch.where(has_ang, ang_frac,
+            torch.zeros_like(lin_frac))),
+        )
+        reward = reward * vel_fraction
 
     return reward
 
