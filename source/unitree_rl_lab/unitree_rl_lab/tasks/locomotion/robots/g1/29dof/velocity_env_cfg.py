@@ -163,7 +163,7 @@ class CommandsCfg:
     base_velocity = mdp.UniformLevelVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        rel_standing_envs=0.1,  # increased from 0.02: more zero-cmd environments so stand_still / feet_contact_zero_cmd terms have enough signal to train against
+        rel_standing_envs=0.02,
         rel_heading_envs=1.0,
         heading_command=False,
         debug_vis=True,
@@ -353,25 +353,16 @@ class RewardsCfg:
     )
 
     # -- zero-command behavior
-    # When there is no velocity command the robot should stand completely still.
-    # Without these terms the robot has no explicit incentive to stop stepping:
-    # early-training balance instability causes compensatory steps, the gait reward
-    # reinforces them, and after 50k iterations "always step" becomes fixed policy.
-    # These two terms encode the clear boundary: no command → no stepping.
+    # Reward both feet on the ground when there is no velocity command.
+    # stand_still (joint-deviation penalty) is intentionally omitted: applied to all
+    # 29 joints it generates ~-17 per step during early training, ~9× any positive
+    # reward, causing the shared PPO policy to suppress all joint motion globally.
     feet_contact_zero_cmd = RewTerm(
         func=mdp.feet_contact_without_cmd,
-        weight=0.5,  # reward both feet on ground when no velocity command
+        weight=0.5,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*ankle_roll.*"),
             "command_name": "base_velocity",
-        },
-    )
-    stand_still_penalty = RewTerm(
-        func=mdp.stand_still,
-        weight=-2.0,  # penalize any joint deviation from default when no velocity command
-        params={
-            "command_name": "base_velocity",
-            "asset_cfg": SceneEntityCfg("robot"),
         },
     )
 

@@ -4,8 +4,9 @@ import torch
 from typing import TYPE_CHECKING
 
 try:
-    from isaaclab.utils.math import quat_apply_inverse
+    from isaaclab.utils.math import quat_apply, quat_apply_inverse
 except ImportError:
+    from isaaclab.utils.math import quat_rotate as quat_apply
     from isaaclab.utils.math import quat_rotate_inverse as quat_apply_inverse
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.managers import SceneEntityCfg
@@ -160,8 +161,10 @@ def foot_clearance_reward(
 
     if command_name is not None:
         cmd = env.command_manager.get_command(command_name)
-        lin_vel_norm = torch.norm(cmd[:, :2], dim=1)
-        reward *= lin_vel_norm > 0.1
+        # Gate on full command norm (not just lin_vel) so the robot still gets foot-swing
+        # incentive when commanded to turn with zero linear velocity.
+        cmd_norm = torch.norm(cmd, dim=1)
+        reward *= cmd_norm >= 0.1
     return reward
 
 
@@ -235,7 +238,7 @@ def feet_gait(
     if command_name is not None:
         cmd = env.command_manager.get_command(command_name)
         cmd_norm = torch.norm(cmd, dim=1)
-        reward *= cmd_norm > 0.1
+        reward *= cmd_norm >= 0.1
 
         # Scale gait reward proportionally to velocity achievement fraction.
         # A binary threshold (e.g. actual_vel > 0.05) is easily gamed: stomping
@@ -252,25 +255,28 @@ def feet_gait(
         cmd_lin_dir = cmd_lin / (cmd_lin_norm.unsqueeze(1) + 1e-6)
         vel_in_cmd_dir = torch.sum(asset.data.root_lin_vel_b[:, :2] * cmd_lin_dir, dim=-1).clamp(min=0)
         lin_frac = torch.where(
-            cmd_lin_norm > 0.1,
+            cmd_lin_norm >= 0.1,
             (vel_in_cmd_dir / cmd_lin_norm).clamp(0.0, 1.0),
             torch.ones_like(cmd_lin_norm),  # no lin cmd → not the constraining axis
         )
 
-        # Angular: signed progress in the commanded rotation direction.
+        # Angular: progress in the commanded rotation direction measured in world frame.
+        # Convert body-frame angular velocity to world frame via the root quaternion,
+        # then project onto world-z to measure true yaw rate (not body-z which tilts).
         cmd_ang = cmd[:, 2]
         cmd_ang_abs = cmd_ang.abs()
-        ang_progress = (asset.data.root_ang_vel_b[:, 2] * cmd_ang.sign()).clamp(min=0)
+        ang_vel_world = quat_apply(asset.data.root_quat_w, asset.data.root_ang_vel_b)
+        ang_progress = (ang_vel_world[:, 2] * cmd_ang.sign()).clamp(min=0)
         ang_frac = torch.where(
-            cmd_ang_abs > 0.1,
+            cmd_ang_abs >= 0.1,
             (ang_progress / cmd_ang_abs).clamp(0.0, 1.0),
             torch.ones_like(cmd_ang_abs),  # no ang cmd → not the constraining axis
         )
 
         # When both axes are commanded, both must be achieved (product).
         # When only one axis is commanded, only that axis gates the reward.
-        has_lin = cmd_lin_norm > 0.1
-        has_ang = cmd_ang_abs > 0.1
+        has_lin = cmd_lin_norm >= 0.1
+        has_ang = cmd_ang_abs >= 0.1
         # When neither axis has a large enough command to constrain individually but
         # the combined norm passed the gate (e.g. lin=0.08, ang=0.08, norm≈0.113),
         # fall back to zero rather than 1.0 — the robot should not get free gait reward.
